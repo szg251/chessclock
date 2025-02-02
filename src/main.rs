@@ -38,8 +38,6 @@ bind_interrupts!(struct Irqs {
 
 static CLOCK: Signal<ThreadModeRawMutex, bool> = Signal::new();
 
-const LONG_CLICK_DELAY: u64 = 300;
-
 struct Outputs<'a> {
     left_led: Output<'a>,
     right_led: Output<'a>,
@@ -67,9 +65,9 @@ async fn main(_spawner: Spawner) {
     let right_led = Output::new(p.PIN_2, Level::Low);
     let buzzer = Pwm::new_output_a(p.PWM_SLICE5, p.PIN_10, pwm::Config::default());
 
-    let mut left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Down);
-    let mut right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Down);
-    let mut control_button = Input::new(p.PIN_5, embassy_rp::gpio::Pull::Down);
+    let mut left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Up);
+    let mut right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Up);
+    let mut control_button = Input::new(p.PIN_5, embassy_rp::gpio::Pull::Up);
 
     let event_channel: Channel<ThreadModeRawMutex, Event, 3> = Channel::new();
     let tx = event_channel.sender();
@@ -101,18 +99,18 @@ async fn handle_button(
 ) {
     loop {
         input.wait_for_low().await;
-        Timer::after(Duration::from_millis(100)).await;
+        let instant = embassy_time::Instant::now();
+        Timer::after(Duration::from_millis(200)).await;
 
-        let res = input
-            .wait_for_high()
-            .with_timeout(Duration::from_millis(300))
-            .await;
-
-        let press_type = match res {
-            Err(_) => PressType::Long,
-            Ok(_) => PressType::Single,
+        input.wait_for_high().await;
+        let press_type = if instant.elapsed() > Duration::from_millis(300) {
+            PressType::Long
+        } else {
+            PressType::Single
         };
+
         tx.send(Event::ButtonPushed(button, press_type)).await;
+        Timer::after(Duration::from_millis(100)).await;
     }
 }
 
@@ -156,7 +154,7 @@ async fn main_loop(
         let prev_state = state.clone();
 
         let mut effects = Effects::new();
-        state.handle_event(&mut effects, event);
+        state.handle_event(&mut effects, event)?;
 
         match effects.buzz {
             Some(freq) => {
