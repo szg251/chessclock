@@ -159,9 +159,9 @@ impl GameState {
             || time_passing(&Duration::from_secs(0), &prev_right_time, &self.right_time);
 
         if high_beep {
-            effects.buzz(880);
+            effects.buzz(880, Duration::from_millis(100));
         } else if low_beep {
-            effects.buzz(440);
+            effects.buzz(440, Duration::from_millis(500));
         }
 
         if self.left_time.as_ticks() == 0 {

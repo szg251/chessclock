@@ -1,9 +1,16 @@
+use embassy_time::Duration;
+
 use crate::app::Page;
 
 pub struct Effects {
     pub set_clock: Option<bool>,
-    pub buzz: Option<u32>,
+    pub buzz: Option<Buzz>,
     pub page_change: Option<Page>,
+}
+
+pub struct Buzz {
+    pub freq: u32,
+    pub duration: Duration,
 }
 
 impl Effects {
@@ -23,11 +30,13 @@ impl Effects {
         }
     }
 
-    pub fn buzz(&mut self, freq: u32) {
-        if let Some(freq2) = self.buzz {
-            self.buzz = Some(freq.min(freq2));
+    pub fn buzz(&mut self, freq: u32, duration: Duration) {
+        if let Some(ref buzz) = self.buzz {
+            if freq > buzz.freq {
+                self.buzz = Some(Buzz { freq, duration })
+            }
         } else {
-            self.buzz = Some(freq)
+            self.buzz = Some(Buzz { freq, duration })
         }
     }
 

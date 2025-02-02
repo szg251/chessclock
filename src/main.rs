@@ -2,9 +2,9 @@
 #![no_main]
 
 use defmt::info;
-use effect::Effects;
+use effect::{Buzz, Effects};
 use embassy_executor::Spawner;
-use embassy_futures::join::join5;
+use embassy_futures::join::{join3, join4};
 use embassy_rp::{
     bind_interrupts,
     gpio::{Input, Level, Output},
@@ -22,6 +22,7 @@ use lcd_lcm1602_i2c::sync_lcd::Lcd;
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::app::{AppState, Button, Event, Page, PressType};
+use crate::aux::pwm_freq_config;
 use crate::error::Error;
 use crate::menu::GameConfig;
 
@@ -37,12 +38,12 @@ bind_interrupts!(struct Irqs {
 });
 
 static CLOCK: Signal<ThreadModeRawMutex, bool> = Signal::new();
+static BUZZ: Signal<ThreadModeRawMutex, Buzz> = Signal::new();
 
 struct Outputs<'a> {
     left_led: Output<'a>,
     right_led: Output<'a>,
     lcd: Lcd<'a, I2c<'a, I2C1, i2c::Async>, embassy_time::Delay>,
-    buzzer: Pwm<'a>,
 }
 
 #[embassy_executor::main]
@@ -63,7 +64,7 @@ async fn main(_spawner: Spawner) {
 
     let left_led = Output::new(p.PIN_1, Level::Low);
     let right_led = Output::new(p.PIN_2, Level::Low);
-    let buzzer = Pwm::new_output_a(p.PWM_SLICE5, p.PIN_10, pwm::Config::default());
+    let mut buzzer = Pwm::new_output_a(p.PWM_SLICE6, p.PIN_12, pwm::Config::default());
 
     let mut left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Up);
     let mut right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Up);
@@ -77,15 +78,17 @@ async fn main(_spawner: Spawner) {
         left_led,
         right_led,
         lcd,
-        buzzer,
     };
 
-    let _ = join5(
+    let _ = join4(
         main_loop(rx, &mut outputs),
         emit_clock(tx),
-        handle_button(tx, &mut left_button, Button::Left),
-        handle_button(tx, &mut right_button, Button::Right),
-        handle_button(tx, &mut control_button, Button::Control),
+        join3(
+            handle_button(tx, &mut left_button, Button::Left),
+            handle_button(tx, &mut right_button, Button::Right),
+            handle_button(tx, &mut control_button, Button::Control),
+        ),
+        handle_buzz(&mut buzzer),
     )
     .await;
 
@@ -100,7 +103,7 @@ async fn handle_button(
     loop {
         input.wait_for_low().await;
         let instant = embassy_time::Instant::now();
-        Timer::after(Duration::from_millis(200)).await;
+        Timer::after_millis(200).await;
 
         input.wait_for_high().await;
         let press_type = if instant.elapsed() > Duration::from_millis(300) {
@@ -110,14 +113,14 @@ async fn handle_button(
         };
 
         tx.send(Event::ButtonPushed(button, press_type)).await;
-        Timer::after(Duration::from_millis(100)).await;
+        Timer::after_millis(100).await;
     }
 }
 
 async fn emit_clock(tx: Sender<'_, ThreadModeRawMutex, Event, 3>) {
     loop {
         let duration = Duration::from_millis(1000);
-        let clock = CLOCK.wait().with_timeout(Duration::from_millis(1000)).await;
+        let clock = CLOCK.wait().with_timeout(duration).await;
         if let Ok(false) = clock {
             loop {
                 if CLOCK.wait().await {
@@ -132,13 +135,22 @@ async fn emit_clock(tx: Sender<'_, ThreadModeRawMutex, Event, 3>) {
 
 async fn main_loop(
     rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
-    mut outputs: &mut Outputs<'_>,
+    outputs: &mut Outputs<'_>,
 ) -> Result<(), Error> {
     info!("Init");
 
+    let test_duration = Duration::from_millis(300);
+    outputs.left_led.set_high();
+    outputs.right_led.set_high();
+    BUZZ.signal(Buzz {
+        freq: 440,
+        duration: test_duration,
+    });
+
+    Timer::after(test_duration).await;
+
     outputs.left_led.set_low();
     outputs.right_led.set_low();
-    outputs.buzzer.set_duty_cycle_fully_off();
 
     let init_state = AppState {
         game_config: GameConfig::default(),
@@ -148,7 +160,7 @@ async fn main_loop(
         game_config: GameConfig::default(),
         page: Page::Welcome,
     };
-    state.display_state(&init_state, &mut outputs)?;
+    state.display_state(&init_state, outputs)?;
     loop {
         let event = rx.receive().await;
         let prev_state = state.clone();
@@ -157,19 +169,14 @@ async fn main_loop(
         state.handle_event(&mut effects, event)?;
 
         match effects.buzz {
-            Some(freq) => {
+            Some(buzz) => {
                 info!("Buzz effect");
-                let clock_freq_hz = embassy_rp::clocks::clk_sys_freq();
-                let divider = 16u8;
-                let period = (clock_freq_hz / (freq * divider as u32)) as u16 - 1;
-                let mut c = pwm::Config::default();
-                c.top = period;
-                c.divider = divider.into();
-                outputs.buzzer.set_config(&c);
-                outputs.buzzer.set_duty_cycle_fully_on();
+                // outputs.buzzer.set_config(&pwm_freq_config(freq));
+                // outputs.buzzer.set_duty_cycle_fully_on().unwrap();
+                BUZZ.signal(buzz);
             }
             None => {
-                outputs.buzzer.set_duty_cycle_fully_off();
+                // outputs.buzzer.set_duty_cycle_fully_off().unwrap();
             }
         }
 
@@ -185,6 +192,17 @@ async fn main_loop(
             }
         }
 
-        state.display_state(&prev_state, &mut outputs)?;
+        state.display_state(&prev_state, outputs)?;
+    }
+}
+
+async fn handle_buzz(buzzer: &mut Pwm<'_>) -> Result<(), Error> {
+    loop {
+        let buzz = BUZZ.wait().await;
+        buzzer.set_config(&pwm_freq_config(buzz.freq));
+        buzzer.set_duty_cycle_fully_on().unwrap();
+
+        Timer::after(buzz.duration).await;
+        buzzer.set_duty_cycle_fully_off().unwrap();
     }
 }
