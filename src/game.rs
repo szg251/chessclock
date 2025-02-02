@@ -58,6 +58,7 @@ impl GameState {
             Event::ButtonPushed(Button::Left, _) => {
                 if self.paused {
                     self.paused = false;
+                    effects.set_clock(true);
                 } else if self.turn == Player::Left {
                     match game_config.increment_type {
                         IncrementType::SuddenDeath { .. } => self.delay = Duration::from_ticks(0),
@@ -83,6 +84,7 @@ impl GameState {
             Event::ButtonPushed(Button::Right, _) => {
                 if self.paused {
                     self.paused = false;
+                    effects.set_clock(true);
                 } else if self.turn == Player::Right {
                     match game_config.increment_type {
                         IncrementType::SuddenDeath { .. } => self.delay = Duration::from_ticks(0),
@@ -108,7 +110,10 @@ impl GameState {
                 }
             }
             Event::ButtonPushed(Button::Control, PressType::Single) => {
-                self.paused = !self.paused;
+                let paused = !self.paused;
+                self.paused = paused;
+                effects.set_clock(!paused);
+
                 info!("Pause: {}", self.paused);
             }
             Event::ButtonPushed(Button::Control, PressType::Long) => {}
@@ -126,7 +131,7 @@ impl GameState {
                             _ => {}
                         }
                     } else {
-                        self.decrement_time(effects, &duration);
+                        self.decrement_time(effects, duration);
                     }
                 }
             }
@@ -165,9 +170,11 @@ impl GameState {
         }
 
         if self.left_time.as_ticks() == 0 {
-            effects.page_change(Page::GameOver(Player::Left))
+            effects.page_change(Page::GameOver(Player::Left));
+            effects.set_clock(false);
         } else if self.right_time.as_ticks() == 0 {
-            effects.page_change(Page::GameOver(Player::Right))
+            effects.page_change(Page::GameOver(Player::Right));
+            effects.set_clock(false);
         }
     }
 

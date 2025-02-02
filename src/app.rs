@@ -67,13 +67,13 @@ impl AppState {
                 Page::Init => {}
                 Page::Welcome => match event {
                     Event::ButtonPushed(Button::Left, _) => {
-                        self.page = Page::Game(GameState::new(&self.game_config, Player::Left))
+                        self.page = Page::Game(GameState::new(&self.game_config, Player::Left));
                     }
                     Event::ButtonPushed(Button::Right, _) => {
-                        self.page = Page::Game(GameState::new(&self.game_config, Player::Right))
+                        self.page = Page::Game(GameState::new(&self.game_config, Player::Right));
                     }
                     Event::ButtonPushed(Button::Control, _) => {
-                        self.page = Page::Menu(MenuState::new())
+                        self.page = Page::Menu(MenuState::new());
                     }
                     Event::Clock(_) => {}
                 },

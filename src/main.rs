@@ -119,17 +119,18 @@ async fn handle_button(
 
 async fn emit_clock(tx: Sender<'_, ThreadModeRawMutex, Event, 3>) {
     loop {
-        let duration = Duration::from_millis(1000);
-        let clock = CLOCK.wait().with_timeout(duration).await;
-        if let Ok(false) = clock {
+        if CLOCK.wait().await {
             loop {
-                if CLOCK.wait().await {
+                let duration = Duration::from_millis(1000);
+                let clock = CLOCK.wait().with_timeout(duration).await;
+
+                if let Ok(false) = clock {
                     break;
                 }
-            }
-        };
 
-        tx.send(Event::Clock(duration)).await;
+                tx.send(Event::Clock(duration)).await;
+            }
+        }
     }
 }
 
@@ -185,11 +186,7 @@ async fn main_loop(
         }
 
         if let Some(clock) = effects.set_clock {
-            if clock {
-                CLOCK.signal(false);
-            } else {
-                CLOCK.signal(true);
-            }
+            CLOCK.signal(clock);
         }
 
         state.display_state(&prev_state, outputs)?;
