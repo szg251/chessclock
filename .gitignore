@@ -1,7 +1,6 @@
 **/target
 .direnv
 .DS_Store
-.cargo
 
 .zed
 
