@@ -18,7 +18,7 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::{Delay, Duration, Timer, WithTimeout};
-use lcd_lcm1602_i2c::sync_lcd::Lcd;
+use lcd_lcm1602_i2c::{sync_lcd::Lcd, Backlight};
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::app::{AppState, Button, Event, Page, PressType};
@@ -162,8 +162,21 @@ async fn main_loop(
         page: Page::Welcome,
     };
     state.display_state(&init_state, outputs)?;
+    let time_until_sleep = Duration::from_secs(60);
     loop {
-        let event = rx.receive().await;
+        let event = rx.receive().with_timeout(time_until_sleep).await;
+
+        let event = match event {
+            Ok(event) => event,
+            Err(_) => {
+                outputs.lcd.backlight(Backlight::Off)?;
+                let event = rx.receive().await;
+
+                outputs.lcd.backlight(Backlight::On)?;
+                event
+            }
+        };
+
         let prev_state = state.clone();
 
         let mut effects = Effects::new();
