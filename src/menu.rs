@@ -38,26 +38,26 @@ impl MenuItem {
         let mut columns = Vec::new();
         match self {
             MenuItem::Preset => {
-                columns.push(Cursor::new(0, 1));
+                let _ = columns.push(Cursor::new(0, 1));
             }
             MenuItem::LeftTime => {
-                columns.push(Cursor::new(1, 60));
-                columns.push(Cursor::new(4, 1));
+                let _ = columns.push(Cursor::new(1, 60));
+                let _ = columns.push(Cursor::new(4, 1));
             }
             MenuItem::RightTime => {
-                columns.push(Cursor::new(1, 60));
-                columns.push(Cursor::new(4, 1));
+                let _ = columns.push(Cursor::new(1, 60));
+                let _ = columns.push(Cursor::new(4, 1));
             }
             MenuItem::IncrementType => {
-                columns.push(Cursor::new(0, 1));
+                let _ = columns.push(Cursor::new(0, 1));
             }
             MenuItem::LeftDelay => {
-                columns.push(Cursor::new(1, 60));
-                columns.push(Cursor::new(4, 1));
+                let _ = columns.push(Cursor::new(1, 60));
+                let _ = columns.push(Cursor::new(4, 1));
             }
             MenuItem::RightDelay => {
-                columns.push(Cursor::new(1, 60));
-                columns.push(Cursor::new(4, 1));
+                let _ = columns.push(Cursor::new(1, 60));
+                let _ = columns.push(Cursor::new(4, 1));
             }
         }
         columns
@@ -226,8 +226,8 @@ impl MenuState {
     pub fn handle_event(&mut self, game_config: &mut GameConfig, event: &Event) {
         let mut disabled: Vec<MenuItem, 5> = Vec::new();
         if matches!(game_config.increment_type, IncrementType::SuddenDeath) {
-            disabled.push(MenuItem::LeftDelay);
-            disabled.push(MenuItem::RightDelay);
+            let _ = disabled.push(MenuItem::LeftDelay);
+            let _ = disabled.push(MenuItem::RightDelay);
         };
         match self.edit_mode {
             EditState::NotEditing => match event {
@@ -282,7 +282,11 @@ impl MenuState {
             EditState::Editing(col) => match event {
                 Event::ButtonPushed(Button::Left, _) => {
                     MENU_ITEMS[self.item_index].edit(game_config, |x| {
-                        x - MENU_ITEMS[self.item_index].cols()[col].multiplier
+                        if x > 0 {
+                            x - MENU_ITEMS[self.item_index].cols()[col].multiplier
+                        } else {
+                            x
+                        }
                     });
                 }
                 Event::ButtonPushed(Button::Right, _) => {
