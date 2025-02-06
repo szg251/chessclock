@@ -4,10 +4,14 @@
 use defmt::info;
 use effect::{Buzz, Effects};
 use embassy_executor::Spawner;
-use embassy_futures::join::{join3, join4};
+use embassy_futures::{
+    join::{join3, join4},
+    select::{select, Either},
+};
 use embassy_rp::{
     bind_interrupts,
-    gpio::{Input, Level, Output},
+    clocks::dormant_sleep,
+    gpio::{DormantWakeConfig, Input, Level, Output},
     i2c::{self, I2c, InterruptHandler as I2cInterruptHandler},
     peripherals::I2C1,
     pwm::{self, Pwm, SetDutyCycle},
@@ -18,7 +22,7 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::{Delay, Duration, Timer, WithTimeout};
-use lcd_lcm1602_i2c::{sync_lcd::Lcd, Backlight};
+use lcd_lcm1602_i2c::{async_lcd::Lcd, Backlight};
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::app::{AppState, Button, Event, Page, PressType};
@@ -40,7 +44,13 @@ bind_interrupts!(struct Irqs {
 static CLOCK: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static BUZZ: Signal<ThreadModeRawMutex, Buzz> = Signal::new();
 
-const SLEEP_TIME: u64 = 60;
+pub enum SystemEvent {
+    SetClock(bool),
+    Buzz(Buzz),
+    Sleep(bool),
+}
+
+const SLEEP_TIME: u64 = 20;
 
 struct Outputs<'a> {
     left_led: Output<'a>,
@@ -62,15 +72,20 @@ async fn main(_spawner: Spawner) {
         .with_cursor_on(false)
         .with_rows(2)
         .init()
+        .await
         .unwrap();
 
     let left_led = Output::new(p.PIN_1, Level::Low);
     let right_led = Output::new(p.PIN_2, Level::Low);
     let mut buzzer = Pwm::new_output_a(p.PWM_SLICE6, p.PIN_12, pwm::Config::default());
 
-    let mut left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Up);
-    let mut right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Up);
-    let mut control_button = Input::new(p.PIN_5, embassy_rp::gpio::Pull::Up);
+    let left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Up);
+    let right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Up);
+    let control_button = Input::new(p.PIN_5, embassy_rp::gpio::Pull::Up);
+
+    let sys_event_channel: Channel<ThreadModeRawMutex, SystemEvent, 3> = Channel::new();
+    let sys_tx = sys_event_channel.sender();
+    let sys_rx = sys_event_channel.receiver();
 
     let event_channel: Channel<ThreadModeRawMutex, Event, 3> = Channel::new();
     let tx = event_channel.sender();
@@ -83,12 +98,12 @@ async fn main(_spawner: Spawner) {
     };
 
     let _ = join4(
-        main_loop(rx, &mut outputs),
+        main_loop(sys_tx, rx, &mut outputs),
         emit_clock(tx),
         join3(
-            handle_button(tx, &mut left_button, Button::Left),
-            handle_button(tx, &mut right_button, Button::Right),
-            handle_button(tx, &mut control_button, Button::Control),
+            handle_button(tx, left_button, Button::Left),
+            handle_button(tx, right_button, Button::Right),
+            handle_button_with_waker(sys_rx, tx, control_button, Button::Control),
         ),
         handle_buzz(&mut buzzer),
     )
@@ -99,7 +114,7 @@ async fn main(_spawner: Spawner) {
 
 async fn handle_button(
     tx: Sender<'_, ThreadModeRawMutex, Event, 3>,
-    input: &mut Input<'_>,
+    mut input: Input<'_>,
     button: Button,
 ) {
     loop {
@@ -116,6 +131,42 @@ async fn handle_button(
 
         tx.send(Event::ButtonPushed(button, press_type)).await;
         Timer::after_millis(100).await;
+    }
+}
+
+async fn handle_button_with_waker(
+    sys_rx: Receiver<'_, ThreadModeRawMutex, SystemEvent, 3>,
+    tx: Sender<'_, ThreadModeRawMutex, Event, 3>,
+    mut input: Input<'_>,
+    button: Button,
+) {
+    loop {
+        match select(input.wait_for_low(), sys_rx.receive()).await {
+            Either::First(_) => {
+                let instant = embassy_time::Instant::now();
+                Timer::after_millis(200).await;
+
+                input.wait_for_high().await;
+                let press_type = if instant.elapsed() > Duration::from_millis(300) {
+                    PressType::Long
+                } else {
+                    PressType::Single
+                };
+
+                tx.send(Event::ButtonPushed(button, press_type)).await;
+                Timer::after_millis(100).await;
+            }
+            Either::Second(SystemEvent::Sleep(true)) => {
+                let _waker = input.dormant_wake(DormantWakeConfig {
+                    edge_high: false,
+                    edge_low: true,
+                    level_high: false,
+                    level_low: false,
+                });
+                dormant_sleep();
+            }
+            Either::Second(_) => {}
+        }
     }
 }
 
@@ -137,6 +188,7 @@ async fn emit_clock(tx: Sender<'_, ThreadModeRawMutex, Event, 3>) {
 }
 
 async fn main_loop(
+    sys_tx: Sender<'_, ThreadModeRawMutex, SystemEvent, 3>,
     rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
     outputs: &mut Outputs<'_>,
 ) -> Result<(), Error> {
@@ -163,9 +215,9 @@ async fn main_loop(
         game_config: GameConfig::default(),
         page: Page::Welcome,
     };
-    state.display_state(&init_state, outputs)?;
+    state.display_state(&init_state, outputs).await?;
     loop {
-        let event = receive_event_or_sleep(rx, outputs, &state).await?;
+        let event = receive_event_or_sleep(sys_tx, rx, outputs, &state).await?;
 
         let prev_state = state.clone();
 
@@ -185,11 +237,12 @@ async fn main_loop(
             CLOCK.signal(clock);
         }
 
-        state.display_state(&prev_state, outputs)?;
+        state.display_state(&prev_state, outputs).await?;
     }
 }
 
 async fn receive_event_or_sleep(
+    sys_tx: Sender<'_, ThreadModeRawMutex, SystemEvent, 3>,
     rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
     outputs: &mut Outputs<'_>,
     state: &AppState,
@@ -205,13 +258,16 @@ async fn receive_event_or_sleep(
                 return Ok(event);
             }
             Err(_) => {
-                outputs.lcd.backlight(Backlight::Off)?;
+                outputs.lcd.clear().await?;
+                outputs.lcd.backlight(Backlight::Off).await?;
                 outputs.left_led.set_low();
                 outputs.right_led.set_low();
-                let _ = rx.receive().await;
 
-                state.display_state(state, outputs)?;
-                outputs.lcd.backlight(Backlight::On)?;
+                sys_tx.send(SystemEvent::Sleep(true)).await;
+                Timer::after_millis(10).await;
+
+                state.display_state(state, outputs).await?;
+                outputs.lcd.backlight(Backlight::On).await?;
             }
         }
     }

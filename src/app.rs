@@ -8,7 +8,7 @@ use crate::{
     Outputs,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Button {
     Left,
     Right,
@@ -101,22 +101,22 @@ impl AppState {
         Ok(())
     }
 
-    pub fn display_state(
+    pub async fn display_state(
         &self,
         prev_state: &AppState,
         outputs: &mut Outputs<'_>,
     ) -> Result<(), Error> {
         if self.page.is_changed(&prev_state.page) {
-            outputs.lcd.clear()?;
-            outputs.lcd.cursor_blink(false)?;
-            outputs.lcd.cursor_on(false)?;
+            outputs.lcd.clear().await?;
+            outputs.lcd.cursor_blink(false).await?;
+            outputs.lcd.cursor_on(false).await?;
         }
         match self.page {
             Page::Init => {}
             Page::Welcome => {
                 if !matches!(prev_state.page, Page::Welcome) {
-                    outputs.lcd.set_cursor(0, 3)?;
-                    outputs.lcd.write_str("ChessClock")?;
+                    outputs.lcd.set_cursor(0, 3).await?;
+                    outputs.lcd.write_str("ChessClock").await?;
                 };
             }
             Page::Menu(ref menu_state) => {
@@ -126,12 +126,9 @@ impl AppState {
                 } else {
                     None
                 };
-                menu_state.display_state(
-                    prev_state,
-                    &prev_game_config,
-                    &self.game_config,
-                    outputs,
-                )?
+                menu_state
+                    .display_state(prev_state, &prev_game_config, &self.game_config, outputs)
+                    .await?
             }
             Page::Game(ref game_state) => {
                 let prev_state = if let Page::Game(ref game_state) = prev_state.page {
@@ -139,16 +136,16 @@ impl AppState {
                 } else {
                     None
                 };
-                game_state.display_state(prev_state, outputs)?
+                game_state.display_state(prev_state, outputs).await?
             }
             Page::GameOver(ref loser) => {
-                outputs.lcd.set_cursor(0, 0)?;
+                outputs.lcd.set_cursor(0, 0).await?;
                 match loser {
-                    Player::Left => outputs.lcd.write_str("Left player"),
-                    Player::Right => outputs.lcd.write_str("Right player"),
+                    Player::Left => outputs.lcd.write_str("Left player").await,
+                    Player::Right => outputs.lcd.write_str("Right player").await,
                 }?;
-                outputs.lcd.set_cursor(1, 0)?;
-                outputs.lcd.write_str("timeout :(")?;
+                outputs.lcd.set_cursor(1, 0).await?;
+                outputs.lcd.write_str("timeout :(").await?;
             }
         }
 

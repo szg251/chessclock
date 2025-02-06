@@ -303,7 +303,7 @@ impl MenuState {
         }
     }
 
-    pub fn display_state(
+    pub async fn display_state(
         &self,
         prev_state: Option<&Self>,
         prev_game_config: &GameConfig,
@@ -313,85 +313,91 @@ impl MenuState {
         if Some(self) != prev_state || prev_game_config != game_config {
             match self.edit_mode {
                 EditState::NotEditing => {
-                    outputs.lcd.clear()?;
-                    outputs.lcd.cursor_on(false)?;
-                    outputs.lcd.cursor_blink(false)?;
+                    outputs.lcd.clear().await?;
+                    outputs.lcd.cursor_on(false).await?;
+                    outputs.lcd.cursor_blink(false).await?;
 
-                    self.print_menu(game_config, outputs)?;
-                    self.print_value(game_config, outputs)?;
+                    self.print_menu(game_config, outputs).await?;
+                    self.print_value(game_config, outputs).await?;
                 }
                 EditState::Cursor(col) => {
-                    self.print_value(game_config, outputs)?;
+                    self.print_value(game_config, outputs).await?;
 
                     outputs
                         .lcd
-                        .set_cursor(1, MENU_ITEMS[self.item_index].cols()[col].position)?;
-                    outputs.lcd.cursor_on(true)?;
-                    outputs.lcd.cursor_blink(false)?;
+                        .set_cursor(1, MENU_ITEMS[self.item_index].cols()[col].position)
+                        .await?;
+                    outputs.lcd.cursor_on(true).await?;
+                    outputs.lcd.cursor_blink(false).await?;
                 }
                 EditState::Editing(col) => {
-                    self.print_value(game_config, outputs)?;
+                    self.print_value(game_config, outputs).await?;
 
                     outputs
                         .lcd
-                        .set_cursor(1, MENU_ITEMS[self.item_index].cols()[col].position)?;
-                    outputs.lcd.cursor_on(false)?;
-                    outputs.lcd.cursor_blink(true)?;
+                        .set_cursor(1, MENU_ITEMS[self.item_index].cols()[col].position)
+                        .await?;
+                    outputs.lcd.cursor_on(false).await?;
+                    outputs.lcd.cursor_blink(true).await?;
                 }
             }
         }
         Ok(())
     }
 
-    fn print_menu(&self, game_config: &GameConfig, outputs: &mut Outputs<'_>) -> Result<(), Error> {
-        outputs.lcd.set_cursor(0, 0)?;
+    async fn print_menu(
+        &self,
+        game_config: &GameConfig,
+        outputs: &mut Outputs<'_>,
+    ) -> Result<(), Error> {
+        outputs.lcd.set_cursor(0, 0).await?;
         match MENU_ITEMS[self.item_index] {
             MenuItem::Preset => {
-                outputs.lcd.write_str("Preset")?;
+                outputs.lcd.write_str("Preset").await?;
             }
             MenuItem::LeftTime => {
-                outputs.lcd.write_str("Left time")?;
+                outputs.lcd.write_str("Left time").await?;
             }
             MenuItem::RightTime => {
-                outputs.lcd.write_str("Right time")?;
+                outputs.lcd.write_str("Right time").await?;
             }
             MenuItem::IncrementType => {
-                outputs.lcd.write_str("Increment type")?;
+                outputs.lcd.write_str("Increment type").await?;
             }
             MenuItem::LeftDelay => match game_config.increment_type {
                 IncrementType::SuddenDeath => {}
                 IncrementType::Increment { .. } => {
-                    outputs.lcd.write_str("Left increment")?;
+                    outputs.lcd.write_str("Left increment").await?;
                 }
                 IncrementType::Delay { .. } => {
-                    outputs.lcd.write_str("Left delay")?;
+                    outputs.lcd.write_str("Left delay").await?;
                 }
                 IncrementType::Bronstein { .. } => {
-                    outputs.lcd.write_str("Left delay")?;
+                    outputs.lcd.write_str("Left delay").await?;
                 }
             },
             MenuItem::RightDelay => match game_config.increment_type {
                 IncrementType::SuddenDeath => {}
                 IncrementType::Increment { .. } => {
-                    outputs.lcd.write_str("Right increment")?;
+                    outputs.lcd.write_str("Right increment").await?;
                 }
                 IncrementType::Delay { .. } => {
-                    outputs.lcd.write_str("Right delay")?;
+                    outputs.lcd.write_str("Right delay").await?;
                 }
                 IncrementType::Bronstein { .. } => {
-                    outputs.lcd.write_str("Right delay")?;
+                    outputs.lcd.write_str("Right delay").await?;
                 }
             },
         }
         Ok(())
     }
 
-    fn print_value(
+    async fn print_value(
         &self,
         game_config: &GameConfig,
         outputs: &mut Outputs<'_>,
     ) -> Result<(), Error> {
-        outputs.lcd.set_cursor(1, 0)?;
+        outputs.lcd.set_cursor(1, 0).await?;
         match MENU_ITEMS[self.item_index] {
             MenuItem::Preset => {
                 let preset_name = PRESETS
@@ -405,49 +411,54 @@ impl MenuState {
                     })
                     .unwrap_or("Unknown");
 
-                outputs.lcd.write_str("                ")?;
-                outputs.lcd.set_cursor(1, 0)?;
-                outputs.lcd.write_str(preset_name)?;
+                outputs.lcd.write_str("                ").await?;
+                outputs.lcd.set_cursor(1, 0).await?;
+                outputs.lcd.write_str(preset_name).await?;
             }
             MenuItem::LeftTime => {
                 outputs
                     .lcd
-                    .write_str(&format_duration(game_config.left_time)?)?;
+                    .write_str(&format_duration(game_config.left_time)?)
+                    .await?;
             }
             MenuItem::RightTime => {
                 outputs
                     .lcd
-                    .write_str(&format_duration(game_config.right_time)?)?;
+                    .write_str(&format_duration(game_config.right_time)?)
+                    .await?;
             }
             MenuItem::IncrementType => {
-                outputs.lcd.set_cursor(1, 0)?;
-                outputs.lcd.write_str("                ")?;
-                outputs.lcd.set_cursor(1, 0)?;
+                outputs.lcd.set_cursor(1, 0).await?;
+                outputs.lcd.write_str("                ").await?;
+                outputs.lcd.set_cursor(1, 0).await?;
                 match game_config.increment_type {
                     IncrementType::SuddenDeath => {
-                        outputs.lcd.write_str("Sudden death")?;
+                        outputs.lcd.write_str("Sudden death").await?;
                     }
                     IncrementType::Increment { .. } => {
-                        outputs.lcd.write_str("Increment")?;
+                        outputs.lcd.write_str("Increment").await?;
                     }
                     IncrementType::Delay { .. } => {
-                        outputs.lcd.write_str("Delay")?;
+                        outputs.lcd.write_str("Delay").await?;
                     }
                     IncrementType::Bronstein { .. } => {
-                        outputs.lcd.write_str("Bronstein delay")?;
+                        outputs.lcd.write_str("Bronstein delay").await?;
                     }
                 }
             }
             MenuItem::LeftDelay => match game_config.increment_type {
                 IncrementType::SuddenDeath => {}
                 IncrementType::Increment { left_increment, .. } => {
-                    outputs.lcd.write_str(&format_duration(left_increment)?)?;
+                    outputs
+                        .lcd
+                        .write_str(&format_duration(left_increment)?)
+                        .await?;
                 }
                 IncrementType::Delay { left_delay, .. } => {
-                    outputs.lcd.write_str(&format_duration(left_delay)?)?;
+                    outputs.lcd.write_str(&format_duration(left_delay)?).await?;
                 }
                 IncrementType::Bronstein { left_delay, .. } => {
-                    outputs.lcd.write_str(&format_duration(left_delay)?)?;
+                    outputs.lcd.write_str(&format_duration(left_delay)?).await?;
                 }
             },
             MenuItem::RightDelay => match game_config.increment_type {
@@ -455,13 +466,22 @@ impl MenuState {
                 IncrementType::Increment {
                     right_increment, ..
                 } => {
-                    outputs.lcd.write_str(&format_duration(right_increment)?)?;
+                    outputs
+                        .lcd
+                        .write_str(&format_duration(right_increment)?)
+                        .await?;
                 }
                 IncrementType::Delay { right_delay, .. } => {
-                    outputs.lcd.write_str(&format_duration(right_delay)?)?;
+                    outputs
+                        .lcd
+                        .write_str(&format_duration(right_delay)?)
+                        .await?;
                 }
                 IncrementType::Bronstein { right_delay, .. } => {
-                    outputs.lcd.write_str(&format_duration(right_delay)?)?;
+                    outputs
+                        .lcd
+                        .write_str(&format_duration(right_delay)?)
+                        .await?;
                 }
             },
         }
