@@ -40,6 +40,8 @@ bind_interrupts!(struct Irqs {
 static CLOCK: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static BUZZ: Signal<ThreadModeRawMutex, Buzz> = Signal::new();
 
+const SLEEP_TIME: u64 = 60;
+
 struct Outputs<'a> {
     left_led: Output<'a>,
     right_led: Output<'a>,
@@ -162,36 +164,17 @@ async fn main_loop(
         page: Page::Welcome,
     };
     state.display_state(&init_state, outputs)?;
-    let time_until_sleep = Duration::from_secs(60);
     loop {
-        let event = rx.receive().with_timeout(time_until_sleep).await;
-
-        let event = match event {
-            Ok(event) => event,
-            Err(_) => {
-                outputs.lcd.backlight(Backlight::Off)?;
-                let event = rx.receive().await;
-
-                outputs.lcd.backlight(Backlight::On)?;
-                event
-            }
-        };
+        let event = receive_event_or_sleep(rx, outputs, &state).await?;
 
         let prev_state = state.clone();
 
         let mut effects = Effects::new();
         state.handle_event(&mut effects, event)?;
 
-        match effects.buzz {
-            Some(buzz) => {
-                info!("Buzz effect");
-                // outputs.buzzer.set_config(&pwm_freq_config(freq));
-                // outputs.buzzer.set_duty_cycle_fully_on().unwrap();
-                BUZZ.signal(buzz);
-            }
-            None => {
-                // outputs.buzzer.set_duty_cycle_fully_off().unwrap();
-            }
+        if let Some(buzz) = effects.buzz {
+            info!("Buzz effect");
+            BUZZ.signal(buzz);
         }
 
         if let Some(page) = effects.page_change {
@@ -203,6 +186,34 @@ async fn main_loop(
         }
 
         state.display_state(&prev_state, outputs)?;
+    }
+}
+
+async fn receive_event_or_sleep(
+    rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
+    outputs: &mut Outputs<'_>,
+    state: &AppState,
+) -> Result<Event, Error> {
+    let time_until_sleep = Duration::from_secs(SLEEP_TIME);
+    let mut event;
+    loop {
+        event = rx.receive().with_timeout(time_until_sleep).await;
+
+        // Sleep after 1 minute of inactivity
+        match event {
+            Ok(event) => {
+                return Ok(event);
+            }
+            Err(_) => {
+                outputs.lcd.backlight(Backlight::Off)?;
+                outputs.left_led.set_low();
+                outputs.right_led.set_low();
+                let _ = rx.receive().await;
+
+                state.display_state(state, outputs)?;
+                outputs.lcd.backlight(Backlight::On)?;
+            }
+        }
     }
 }
 

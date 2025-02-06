@@ -60,6 +60,7 @@ impl AppState {
                 if matches!(self.page, Page::Menu(_)) {
                     self.page = Page::Welcome
                 } else {
+                    effects.set_clock(false);
                     self.page = Page::Menu(MenuState::new())
                 }
             }

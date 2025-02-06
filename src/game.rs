@@ -119,7 +119,7 @@ impl GameState {
             Event::ButtonPushed(Button::Control, PressType::Long) => {}
             Event::Clock(duration) => {
                 if !self.paused {
-                    if !self.delay.as_ticks() == 0 {
+                    if self.delay.as_ticks() != 0 {
                         match game_config.increment_type {
                             IncrementType::Delay { .. } => {
                                 self.delay -= *duration;
