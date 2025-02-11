@@ -1,20 +1,24 @@
 #![no_std]
 #![no_main]
 
-use defmt::info;
+use defmt::{info, unwrap};
 use effect::{Buzz, Effects};
 use embassy_executor::Spawner;
 use embassy_futures::{
     join::{join3, join4},
     select::{select, Either},
 };
-use embassy_rp::{
+use embassy_stm32::{
     bind_interrupts,
-    clocks::dormant_sleep,
-    gpio::{DormantWakeConfig, Input, Level, Output},
-    i2c::{self, I2c, InterruptHandler as I2cInterruptHandler},
-    peripherals::I2C1,
-    pwm::{self, Pwm, SetDutyCycle},
+    exti::ExtiInput,
+    gpio::{Level, Output, OutputType, Pull, Speed},
+    i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c},
+    peripherals::{I2C1, TIM1},
+    time::Hertz,
+    timer::{
+        low_level::CountingMode,
+        simple_pwm::{PwmPin, SimplePwm},
+    },
 };
 use embassy_sync::{
     blocking_mutex::raw::ThreadModeRawMutex,
@@ -26,7 +30,6 @@ use lcd_lcm1602_i2c::{async_lcd::Lcd, Backlight};
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::app::{AppState, Button, Event, Page, PressType};
-use crate::aux::pwm_freq_config;
 use crate::error::Error;
 use crate::menu::GameConfig;
 
@@ -38,7 +41,8 @@ mod game;
 mod menu;
 
 bind_interrupts!(struct Irqs {
-    I2C1_IRQ => I2cInterruptHandler<I2C1>;
+    I2C1_EV => EventInterruptHandler<I2C1>;
+    I2C1_ER => ErrorInterruptHandler<I2C1>;
 });
 
 static CLOCK: Signal<ThreadModeRawMutex, bool> = Signal::new();
@@ -52,36 +56,55 @@ pub enum SystemEvent {
 
 const SLEEP_TIME: u64 = 20;
 
-struct Outputs<'a> {
+struct Outputs<'a, 'b> {
     left_led: Output<'a>,
     right_led: Output<'a>,
-    lcd: Lcd<'a, I2c<'a, I2C1, i2c::Async>, embassy_time::Delay>,
+    lcd: Lcd<'a, I2c<'b, embassy_stm32::mode::Async>, embassy_time::Delay>,
 }
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_rp::init(Default::default());
+    let stm32_config = Default::default();
+    let p = embassy_stm32::init(stm32_config);
 
-    let config = embassy_rp::i2c::Config::default();
-    let scl = p.PIN_27;
-    let sda = p.PIN_26;
-    let mut i2c = I2c::new_async(p.I2C1, scl, sda, Irqs, config);
+    let config = embassy_stm32::i2c::Config::default();
+    let scl = p.PB6;
+    let sda = p.PB7;
+    let mut i2c = I2c::new(
+        p.I2C1,
+        scl,
+        sda,
+        Irqs,
+        p.DMA1_CH6,
+        p.DMA1_CH7,
+        Hertz::khz(20),
+        config,
+    );
     let mut delay = Delay;
-    let lcd = Lcd::new(&mut i2c, &mut delay)
-        .with_address(0x27)
-        .with_cursor_on(false)
-        .with_rows(2)
-        .init()
-        .await
-        .unwrap();
+    let lcd = unwrap!(
+        Lcd::new(&mut i2c, &mut delay)
+            .with_address(0x27)
+            .with_cursor_on(false)
+            .with_rows(2)
+            .init()
+            .await
+    );
 
-    let left_led = Output::new(p.PIN_1, Level::Low);
-    let right_led = Output::new(p.PIN_2, Level::Low);
-    let mut buzzer = Pwm::new_output_a(p.PWM_SLICE6, p.PIN_12, pwm::Config::default());
+    let left_led = Output::new(p.PC13, Level::Low, Speed::Low);
+    let right_led = Output::new(p.PC15, Level::Low, Speed::Low);
+    let mut buzzer = SimplePwm::new(
+        p.TIM1,
+        Some(PwmPin::new_ch1(p.PA8, OutputType::PushPull)),
+        None,
+        None,
+        None,
+        Hertz::hz(440),
+        CountingMode::default(),
+    );
 
-    let left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Up);
-    let right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Up);
-    let control_button = Input::new(p.PIN_5, embassy_rp::gpio::Pull::Up);
+    let left_button = ExtiInput::new(p.PA0, p.EXTI0, Pull::Up);
+    let right_button = ExtiInput::new(p.PA1, p.EXTI1, Pull::Up);
+    let control_button = ExtiInput::new(p.PA2, p.EXTI2, Pull::Up);
 
     let sys_event_channel: Channel<ThreadModeRawMutex, SystemEvent, 3> = Channel::new();
     let sys_tx = sys_event_channel.sender();
@@ -108,13 +131,11 @@ async fn main(_spawner: Spawner) {
         handle_buzz(&mut buzzer),
     )
     .await;
-
-    // unwrap!(resA);
 }
 
 async fn handle_button(
     tx: Sender<'_, ThreadModeRawMutex, Event, 3>,
-    mut input: Input<'_>,
+    mut input: ExtiInput<'_>,
     button: Button,
 ) {
     loop {
@@ -137,7 +158,7 @@ async fn handle_button(
 async fn handle_button_with_waker(
     sys_rx: Receiver<'_, ThreadModeRawMutex, SystemEvent, 3>,
     tx: Sender<'_, ThreadModeRawMutex, Event, 3>,
-    mut input: Input<'_>,
+    mut input: ExtiInput<'_>,
     button: Button,
 ) {
     loop {
@@ -157,13 +178,13 @@ async fn handle_button_with_waker(
                 Timer::after_millis(100).await;
             }
             Either::Second(SystemEvent::Sleep(true)) => {
-                let _waker = input.dormant_wake(DormantWakeConfig {
-                    edge_high: false,
-                    edge_low: true,
-                    level_high: false,
-                    level_low: false,
-                });
-                dormant_sleep();
+                // let _waker = input.dormant_wake(DormantWakeConfig {
+                //     edge_high: false,
+                //     edge_low: true,
+                //     level_high: false,
+                //     level_low: false,
+                // });
+                // dormant_sleep();
             }
             Either::Second(_) => {}
         }
@@ -190,7 +211,7 @@ async fn emit_clock(tx: Sender<'_, ThreadModeRawMutex, Event, 3>) {
 async fn main_loop(
     sys_tx: Sender<'_, ThreadModeRawMutex, SystemEvent, 3>,
     rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
-    outputs: &mut Outputs<'_>,
+    outputs: &mut Outputs<'_, '_>,
 ) -> Result<(), Error> {
     info!("Init");
 
@@ -244,7 +265,7 @@ async fn main_loop(
 async fn receive_event_or_sleep(
     sys_tx: Sender<'_, ThreadModeRawMutex, SystemEvent, 3>,
     rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
-    outputs: &mut Outputs<'_>,
+    outputs: &mut Outputs<'_, '_>,
     state: &AppState,
 ) -> Result<Event, Error> {
     let time_until_sleep = Duration::from_secs(SLEEP_TIME);
@@ -273,13 +294,15 @@ async fn receive_event_or_sleep(
     }
 }
 
-async fn handle_buzz(buzzer: &mut Pwm<'_>) -> Result<(), Error> {
+async fn handle_buzz(pwm: &mut SimplePwm<'_, TIM1>) -> Result<(), Error> {
     loop {
         let buzz = BUZZ.wait().await;
-        buzzer.set_config(&pwm_freq_config(buzz.freq));
-        buzzer.set_duty_cycle_fully_on().unwrap();
+        pwm.set_frequency(Hertz::hz(buzz.freq));
+        let mut buzzer = pwm.ch1();
+
+        buzzer.set_duty_cycle_fully_on();
 
         Timer::after(buzz.duration).await;
-        buzzer.set_duty_cycle_fully_off().unwrap();
+        buzzer.set_duty_cycle_fully_off();
     }
 }

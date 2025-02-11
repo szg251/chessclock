@@ -308,7 +308,7 @@ impl MenuState {
         prev_state: Option<&Self>,
         prev_game_config: &GameConfig,
         game_config: &GameConfig,
-        outputs: &mut Outputs<'_>,
+        outputs: &mut Outputs<'_, '_>,
     ) -> Result<(), Error> {
         if Some(self) != prev_state || prev_game_config != game_config {
             match self.edit_mode {
@@ -348,7 +348,7 @@ impl MenuState {
     async fn print_menu(
         &self,
         game_config: &GameConfig,
-        outputs: &mut Outputs<'_>,
+        outputs: &mut Outputs<'_, '_>,
     ) -> Result<(), Error> {
         outputs.lcd.set_cursor(0, 0).await?;
         match MENU_ITEMS[self.item_index] {
@@ -395,7 +395,7 @@ impl MenuState {
     async fn print_value(
         &self,
         game_config: &GameConfig,
-        outputs: &mut Outputs<'_>,
+        outputs: &mut Outputs<'_, '_>,
     ) -> Result<(), Error> {
         outputs.lcd.set_cursor(1, 0).await?;
         match MENU_ITEMS[self.item_index] {

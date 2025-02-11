@@ -104,7 +104,7 @@ impl AppState {
     pub async fn display_state(
         &self,
         prev_state: &AppState,
-        outputs: &mut Outputs<'_>,
+        outputs: &mut Outputs<'_, '_>,
     ) -> Result<(), Error> {
         if self.page.is_changed(&prev_state.page) {
             outputs.lcd.clear().await?;

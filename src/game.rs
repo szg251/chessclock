@@ -181,7 +181,7 @@ impl GameState {
     pub async fn display_state(
         &self,
         prev_state: Option<&GameState>,
-        outputs: &mut Outputs<'_>,
+        outputs: &mut Outputs<'_, '_>,
     ) -> Result<(), Error> {
         if Some(self.turn) != prev_state.map(|s| s.turn) {
             match self.turn {
