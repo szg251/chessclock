@@ -88,7 +88,7 @@ async fn main(_spawner: Spawner) {
             .await
     );
 
-    let left_led = Output::new(p.PC13, Level::Low, Speed::Low);
+    let left_led = Output::new(p.PC14, Level::Low, Speed::Low);
     let right_led = Output::new(p.PC15, Level::Low, Speed::Low);
     let mut buzzer = SimplePwm::new(
         p.TIM1,
@@ -228,6 +228,7 @@ async fn receive_event_or_sleep(
     let mut event;
     loop {
         event = rx.receive().with_timeout(time_until_sleep).await;
+        info!("Event received: {}", event);
 
         // Sleep after 1 minute of inactivity
         match event {
@@ -241,9 +242,13 @@ async fn receive_event_or_sleep(
                 outputs.right_led.set_low();
 
                 info!("Sleep");
-                let _ = rx.receive().with_timeout(time_until_sleep).await;
+                let event = rx.receive().await;
+                info!("Event received: {}", event);
 
-                state.display_state(state, outputs).await?;
+                let mut sleep_state = state.clone();
+                sleep_state.page = Page::Init;
+
+                state.display_state(&sleep_state, outputs).await?;
                 outputs.lcd.backlight(Backlight::On).await?;
             }
         }
@@ -256,9 +261,11 @@ async fn handle_buzz(pwm: &mut SimplePwm<'_, TIM1>) -> Result<(), Error> {
         pwm.set_frequency(Hertz::hz(buzz.freq));
         let mut buzzer = pwm.ch1();
 
+        buzzer.enable();
         buzzer.set_duty_cycle_fully_on();
 
         Timer::after(buzz.duration).await;
         buzzer.set_duty_cycle_fully_off();
+        buzzer.disable();
     }
 }

@@ -8,19 +8,20 @@ use crate::{
     Outputs,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, defmt::Format, PartialEq, Eq, Hash)]
 pub enum Button {
     Left,
     Right,
     Control,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, defmt::Format)]
 pub enum PressType {
     Single,
     Long,
 }
 
+#[derive(defmt::Format)]
 pub enum Event {
     ButtonPushed(Button, PressType),
     Clock(Duration),
