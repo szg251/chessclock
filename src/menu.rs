@@ -152,7 +152,18 @@ impl MenuItem {
     }
 }
 
-const PRESETS: [(&str, GameConfig); 2] = [
+const PRESETS: [(&str, GameConfig); 4] = [
+    (
+        "Normal",
+        GameConfig {
+            left_time: Duration::from_secs(10 * 60),
+            right_time: Duration::from_secs(10 * 60),
+            increment_type: IncrementType::Bronstein {
+                left_delay: Duration::from_secs(15),
+                right_delay: Duration::from_secs(15),
+            },
+        },
+    ),
     (
         "Right handicap",
         GameConfig {
@@ -169,6 +180,17 @@ const PRESETS: [(&str, GameConfig); 2] = [
         GameConfig {
             left_time: Duration::from_secs(15),
             right_time: Duration::from_secs(600),
+            increment_type: IncrementType::Bronstein {
+                left_delay: Duration::from_secs(15),
+                right_delay: Duration::from_secs(15),
+            },
+        },
+    ),
+    (
+        "Blitz",
+        GameConfig {
+            left_time: Duration::from_secs(15),
+            right_time: Duration::from_secs(15),
             increment_type: IncrementType::Bronstein {
                 left_delay: Duration::from_secs(15),
                 right_delay: Duration::from_secs(15),
