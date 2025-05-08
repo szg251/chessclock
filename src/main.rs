@@ -88,8 +88,8 @@ async fn main(_spawner: Spawner) {
             .await
     );
 
-    let left_led = Output::new(p.PC14, Level::Low, Speed::Low);
-    let right_led = Output::new(p.PC15, Level::Low, Speed::Low);
+    let left_led = Output::new(p.PC13, Level::Low, Speed::Low);
+    let right_led = Output::new(p.PB11, Level::Low, Speed::Low);
     let mut buzzer = SimplePwm::new(
         p.TIM1,
         Some(PwmPin::new_ch1(p.PA8, OutputType::PushPull)),
@@ -100,9 +100,9 @@ async fn main(_spawner: Spawner) {
         CountingMode::default(),
     );
 
-    let left_button = ExtiInput::new(p.PA0, p.EXTI0, Pull::Up);
-    let right_button = ExtiInput::new(p.PA1, p.EXTI1, Pull::Up);
-    let control_button = ExtiInput::new(p.PA2, p.EXTI2, Pull::Up);
+    let left_button = ExtiInput::new(p.PC14, p.EXTI14, Pull::Up);
+    let right_button = ExtiInput::new(p.PB10, p.EXTI10, Pull::Up);
+    let control_button = ExtiInput::new(p.PC15, p.EXTI15, Pull::Up);
 
     let event_channel: Channel<ThreadModeRawMutex, Event, 3> = Channel::new();
     let tx = event_channel.sender();
