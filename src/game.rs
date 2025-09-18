@@ -78,6 +78,7 @@ impl GameState {
                         }
                     }
                     self.turn = Player::Right;
+                    effects.buzz(220, Duration::from_millis(50));
                     info!("Right's turn")
                 }
             }
@@ -106,6 +107,7 @@ impl GameState {
                         }
                     }
                     self.turn = Player::Left;
+                    effects.buzz(220, Duration::from_millis(50));
                     info!("Left's turn")
                 }
             }
