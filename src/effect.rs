@@ -41,7 +41,7 @@ impl Effects {
     }
 
     pub fn page_change(&mut self, page: Page) {
-        if let None = self.page_change {
+        if self.page_change.is_none() {
             self.page_change = Some(page);
         }
     }

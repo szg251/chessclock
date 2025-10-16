@@ -78,6 +78,7 @@ impl GameState {
                         }
                     }
                     self.turn = Player::Right;
+                    effects.buzz(220, Duration::from_millis(50));
                     info!("Right's turn")
                 }
             }
@@ -106,6 +107,7 @@ impl GameState {
                         }
                     }
                     self.turn = Player::Left;
+                    effects.buzz(220, Duration::from_millis(50));
                     info!("Left's turn")
                 }
             }
@@ -119,7 +121,7 @@ impl GameState {
             Event::ButtonPushed(Button::Control, PressType::Long) => {}
             Event::Clock(duration) => {
                 if !self.paused {
-                    if !self.delay.as_ticks() == 0 {
+                    if self.delay.as_ticks() != 0 {
                         match game_config.increment_type {
                             IncrementType::Delay { .. } => {
                                 self.delay -= *duration;
@@ -178,10 +180,10 @@ impl GameState {
         }
     }
 
-    pub fn display_state(
+    pub async fn display_state(
         &self,
         prev_state: Option<&GameState>,
-        outputs: &mut Outputs,
+        outputs: &mut Outputs<'_, '_>,
     ) -> Result<(), Error> {
         if Some(self.turn) != prev_state.map(|s| s.turn) {
             match self.turn {
@@ -200,24 +202,30 @@ impl GameState {
         let left_secs = self.left_time.ceil_secs();
 
         if prev_left_secs.is_none() || prev_left_secs != Some(left_secs) {
-            outputs.lcd.set_cursor(0, 0)?;
-            outputs.lcd.write_str(format_secs(left_secs)?.as_str())?;
+            outputs.lcd.set_cursor(0, 0).await?;
+            outputs
+                .lcd
+                .write_str(format_secs(left_secs)?.as_str())
+                .await?;
         }
 
         let prev_right_secs = prev_state.map(|s| s.right_time.ceil_secs());
         let right_secs = self.right_time.ceil_secs();
 
         if prev_right_secs.is_none() || prev_right_secs != Some(right_secs) {
-            outputs.lcd.set_cursor(0, 11)?;
-            outputs.lcd.write_str(format_secs(right_secs)?.as_str())?;
+            outputs.lcd.set_cursor(0, 11).await?;
+            outputs
+                .lcd
+                .write_str(format_secs(right_secs)?.as_str())
+                .await?;
         }
 
         if prev_state.map(|s| s.paused) != Some(self.paused) {
-            outputs.lcd.set_cursor(1, 5)?;
+            outputs.lcd.set_cursor(1, 5).await?;
             if self.paused {
-                outputs.lcd.write_str("paused")?;
+                outputs.lcd.write_str("paused").await?;
             } else {
-                outputs.lcd.write_str("      ")?;
+                outputs.lcd.write_str("      ").await?;
             }
         }
         Ok(())

@@ -1,16 +1,21 @@
 #![no_std]
 #![no_main]
 
-use defmt::info;
+use defmt::{info, unwrap};
 use effect::{Buzz, Effects};
 use embassy_executor::Spawner;
 use embassy_futures::join::{join3, join4};
-use embassy_rp::{
+use embassy_stm32::{
     bind_interrupts,
-    gpio::{Input, Level, Output},
-    i2c::{self, I2c, InterruptHandler as I2cInterruptHandler},
-    peripherals::I2C1,
-    pwm::{self, Pwm, SetDutyCycle},
+    exti::ExtiInput,
+    gpio::{Level, Output, OutputType, Pull, Speed},
+    i2c::{ErrorInterruptHandler, EventInterruptHandler, I2c},
+    peripherals::{I2C1, TIM1},
+    time::Hertz,
+    timer::{
+        low_level::CountingMode,
+        simple_pwm::{PwmPin, SimplePwm},
+    },
 };
 use embassy_sync::{
     blocking_mutex::raw::ThreadModeRawMutex,
@@ -18,11 +23,10 @@ use embassy_sync::{
     signal::Signal,
 };
 use embassy_time::{Delay, Duration, Timer, WithTimeout};
-use lcd_lcm1602_i2c::{sync_lcd::Lcd, Backlight};
+use lcd_lcm1602_i2c::{async_lcd::Lcd, Backlight};
 use {defmt_rtt as _, panic_probe as _};
 
 use crate::app::{AppState, Button, Event, Page, PressType};
-use crate::aux::pwm_freq_config;
 use crate::error::Error;
 use crate::menu::GameConfig;
 
@@ -34,41 +38,71 @@ mod game;
 mod menu;
 
 bind_interrupts!(struct Irqs {
-    I2C1_IRQ => I2cInterruptHandler<I2C1>;
+    I2C1_EV => EventInterruptHandler<I2C1>;
+    I2C1_ER => ErrorInterruptHandler<I2C1>;
 });
 
 static CLOCK: Signal<ThreadModeRawMutex, bool> = Signal::new();
 static BUZZ: Signal<ThreadModeRawMutex, Buzz> = Signal::new();
 
-struct Outputs<'a> {
+pub enum SystemEvent {
+    SetClock(bool),
+    Buzz(Buzz),
+    Sleep(bool),
+}
+
+const SLEEP_TIME: u64 = 20;
+
+struct Outputs<'a, 'b> {
     left_led: Output<'a>,
     right_led: Output<'a>,
-    lcd: Lcd<'a, I2c<'a, I2C1, i2c::Async>, embassy_time::Delay>,
+    lcd: Lcd<'a, I2c<'b, embassy_stm32::mode::Async>, embassy_time::Delay>,
 }
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    let p = embassy_rp::init(Default::default());
+    let stm32_config = Default::default();
+    let p = embassy_stm32::init(stm32_config);
 
-    let config = embassy_rp::i2c::Config::default();
-    let scl = p.PIN_27;
-    let sda = p.PIN_26;
-    let mut i2c = I2c::new_async(p.I2C1, scl, sda, Irqs, config);
+    let config = embassy_stm32::i2c::Config::default();
+    let scl = p.PB6;
+    let sda = p.PB7;
+
+    let mut i2c = I2c::new(
+        p.I2C1,
+        scl,
+        sda,
+        Irqs,
+        p.DMA1_CH6,
+        p.DMA1_CH7,
+        Hertz::khz(100),
+        config,
+    );
     let mut delay = Delay;
-    let lcd = Lcd::new(&mut i2c, &mut delay)
-        .with_address(0x27)
-        .with_cursor_on(false)
-        .with_rows(2)
-        .init()
-        .unwrap();
+    let lcd = unwrap!(
+        Lcd::new(&mut i2c, &mut delay)
+            .with_address(0x27)
+            .with_cursor_on(false)
+            .with_rows(2)
+            .init()
+            .await
+    );
 
-    let left_led = Output::new(p.PIN_1, Level::Low);
-    let right_led = Output::new(p.PIN_2, Level::Low);
-    let mut buzzer = Pwm::new_output_a(p.PWM_SLICE6, p.PIN_12, pwm::Config::default());
+    let left_led = Output::new(p.PC13, Level::Low, Speed::Low);
+    let right_led = Output::new(p.PB11, Level::Low, Speed::Low);
+    let mut buzzer = SimplePwm::new(
+        p.TIM1,
+        Some(PwmPin::new_ch1(p.PA8, OutputType::PushPull)),
+        None,
+        None,
+        None,
+        Hertz::hz(440),
+        CountingMode::default(),
+    );
 
-    let mut left_button = Input::new(p.PIN_3, embassy_rp::gpio::Pull::Up);
-    let mut right_button = Input::new(p.PIN_4, embassy_rp::gpio::Pull::Up);
-    let mut control_button = Input::new(p.PIN_5, embassy_rp::gpio::Pull::Up);
+    let left_button = ExtiInput::new(p.PC14, p.EXTI14, Pull::Up);
+    let right_button = ExtiInput::new(p.PB10, p.EXTI10, Pull::Up);
+    let control_button = ExtiInput::new(p.PC15, p.EXTI15, Pull::Up);
 
     let event_channel: Channel<ThreadModeRawMutex, Event, 3> = Channel::new();
     let tx = event_channel.sender();
@@ -84,20 +118,18 @@ async fn main(_spawner: Spawner) {
         main_loop(rx, &mut outputs),
         emit_clock(tx),
         join3(
-            handle_button(tx, &mut left_button, Button::Left),
-            handle_button(tx, &mut right_button, Button::Right),
-            handle_button(tx, &mut control_button, Button::Control),
+            handle_button(tx, left_button, Button::Left),
+            handle_button(tx, right_button, Button::Right),
+            handle_button(tx, control_button, Button::Control),
         ),
         handle_buzz(&mut buzzer),
     )
     .await;
-
-    // unwrap!(resA);
 }
 
 async fn handle_button(
     tx: Sender<'_, ThreadModeRawMutex, Event, 3>,
-    input: &mut Input<'_>,
+    mut input: ExtiInput<'_>,
     button: Button,
 ) {
     loop {
@@ -136,7 +168,7 @@ async fn emit_clock(tx: Sender<'_, ThreadModeRawMutex, Event, 3>) {
 
 async fn main_loop(
     rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
-    outputs: &mut Outputs<'_>,
+    outputs: &mut Outputs<'_, '_>,
 ) -> Result<(), Error> {
     info!("Init");
 
@@ -161,37 +193,18 @@ async fn main_loop(
         game_config: GameConfig::default(),
         page: Page::Welcome,
     };
-    state.display_state(&init_state, outputs)?;
-    let time_until_sleep = Duration::from_secs(60);
+    state.display_state(&init_state, outputs).await?;
     loop {
-        let event = rx.receive().with_timeout(time_until_sleep).await;
-
-        let event = match event {
-            Ok(event) => event,
-            Err(_) => {
-                outputs.lcd.backlight(Backlight::Off)?;
-                let event = rx.receive().await;
-
-                outputs.lcd.backlight(Backlight::On)?;
-                event
-            }
-        };
+        let event = receive_event_or_sleep(rx, outputs, &state).await?;
 
         let prev_state = state.clone();
 
         let mut effects = Effects::new();
         state.handle_event(&mut effects, event)?;
 
-        match effects.buzz {
-            Some(buzz) => {
-                info!("Buzz effect");
-                // outputs.buzzer.set_config(&pwm_freq_config(freq));
-                // outputs.buzzer.set_duty_cycle_fully_on().unwrap();
-                BUZZ.signal(buzz);
-            }
-            None => {
-                // outputs.buzzer.set_duty_cycle_fully_off().unwrap();
-            }
+        if let Some(buzz) = effects.buzz {
+            info!("Buzz effect");
+            BUZZ.signal(buzz);
         }
 
         if let Some(page) = effects.page_change {
@@ -202,17 +215,57 @@ async fn main_loop(
             CLOCK.signal(clock);
         }
 
-        state.display_state(&prev_state, outputs)?;
+        state.display_state(&prev_state, outputs).await?;
     }
 }
 
-async fn handle_buzz(buzzer: &mut Pwm<'_>) -> Result<(), Error> {
+async fn receive_event_or_sleep(
+    rx: Receiver<'_, ThreadModeRawMutex, Event, 3>,
+    outputs: &mut Outputs<'_, '_>,
+    state: &AppState,
+) -> Result<Event, Error> {
+    let time_until_sleep = Duration::from_secs(SLEEP_TIME);
+    let mut event;
+    loop {
+        event = rx.receive().with_timeout(time_until_sleep).await;
+        info!("Event received: {}", event);
+
+        // Sleep after 1 minute of inactivity
+        match event {
+            Ok(event) => {
+                return Ok(event);
+            }
+            Err(_) => {
+                outputs.lcd.clear().await?;
+                outputs.lcd.backlight(Backlight::Off).await?;
+                outputs.left_led.set_low();
+                outputs.right_led.set_low();
+
+                info!("Sleep");
+                let event = rx.receive().await;
+                info!("Event received: {}", event);
+
+                let mut sleep_state = state.clone();
+                sleep_state.page = Page::Init;
+
+                state.display_state(&sleep_state, outputs).await?;
+                outputs.lcd.backlight(Backlight::On).await?;
+            }
+        }
+    }
+}
+
+async fn handle_buzz(pwm: &mut SimplePwm<'_, TIM1>) -> Result<(), Error> {
     loop {
         let buzz = BUZZ.wait().await;
-        buzzer.set_config(&pwm_freq_config(buzz.freq));
-        buzzer.set_duty_cycle_fully_on().unwrap();
+        pwm.set_frequency(Hertz::hz(buzz.freq));
+        let mut buzzer = pwm.ch1();
+
+        buzzer.enable();
+        buzzer.set_duty_cycle_fully_on();
 
         Timer::after(buzz.duration).await;
-        buzzer.set_duty_cycle_fully_off().unwrap();
+        buzzer.set_duty_cycle_fully_off();
+        buzzer.disable();
     }
 }

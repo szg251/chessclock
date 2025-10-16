@@ -2,8 +2,6 @@
 .direnv
 .DS_Store
 
-.zed
-
 # Devenv
 .devenv*
 devenv.local.nix

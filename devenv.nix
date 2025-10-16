@@ -1,26 +1,21 @@
 { pkgs, ... }:
 
+let
+  pyocd = import ./nix/pyocd pkgs;
+  defmt-print = import ./nix/defmt-print pkgs;
+in
 {
   packages = [
-    # pkgs.pkgsCross.raspberryPi.stdenv.cc
-    # pkgs.probe-rs-tools
-    pkgs.elf2uf2-rs
-    pkgs.flip-link
+    pyocd
+    defmt-print
   ];
 
-  env = {
-    CARGO_BUILD_TARGET = "thumbv6m-none-eabi";
-    # CARGO_TARGET_THUMBV6_NONE_EABI_LINKER =
-    #   let
-    #     inherit (pkgs.pkgsCross.raspberryPi.stdenv) cc;
-    #   in
-    #   "${cc}/bin/${cc.targetPrefix}cc";
-  };
+  env.CARGO_BUILD_TARGET = "thumbv7m-none-eabi";
 
   languages.rust = {
     enable = true;
     channel = "stable";
-    targets = [ "thumbv6m-none-eabi" ];
+    targets = [ "thumbv7m-none-eabi" ];
   };
 
   # https://devenv.sh/pre-commit-hooks/
