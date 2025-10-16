@@ -1,4 +1,4 @@
-# Chess Clock using a STM33 microcontroller
+# Chess Clock using a STM32 microcontroller
 
 This is my first little embedded project, a simple chess clock with configurable time keeping.
 
